@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"os"
 
-	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 )
 
@@ -33,28 +31,20 @@ func WithModel(model string) Option{
 	}
 }
 
-func generateChatCompletion(prompt string, options ...Option) (string, error) {
-	token := os.Getenv("GROQ_API_KEY")
-
+func NewLLM(options ...Option)  (*openai.LLM, error) {
 	cc := ChatCompletion{
 		url: "https://api.groq.com/openai/v1",
 		model: "llama-3.1-8b-instant",
-		token: token,
+		token: os.Getenv("GROQ_API_KEY"),
 	}
-
 	for _, option := range options {
 		option(&cc)
 	}
 
 	llm, err := openai.New(openai.WithBaseURL(cc.url), openai.WithToken(cc.token), openai.WithModel(cc.model))
-	if err != nil {
-		return "", err
-	}
 
-	completion, err := llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
 	if err != nil {
-		return "", err
+		return llm, err
 	}
-
-	return completion, nil
+	return llm, nil
 }

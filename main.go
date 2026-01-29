@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 	"syscall"
 
 	"github.com/gordonklaus/portaudio"
+	"github.com/tmc/langchaingo/chains"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/prompts"
 )
 
 const (
@@ -42,6 +46,14 @@ func main() {
 	fmt.Println("Voice Assistant - Press Ctrl+C to stop recording")
 	fmt.Println("==============================================")
 
+	llm, err := NewLLM()
+	if err != nil {
+		fmt.Printf("Error creating LLM: %v\n", err)
+		os.Exit(1)
+	}
+
+	llmChain := chains.NewLLMChain(llm, prompts.NewPromptTemplate("Du bist deutsch lehrer {{ .text }} ", []string{"text"}))
+
 	// Record audio
 	fmt.Println("\n[1/3] Recording audio... (Press Ctrl+C to stop)")
 	audioData, err := recordAudio()
@@ -61,7 +73,7 @@ func main() {
 	fmt.Printf("Transcription: %s\n", transcription)
 
 	transcription = "Wie gehts es dir? Sprichst du gut deutsch?"
-	completion, err := generateChatCompletion(transcription) 
+	output, err := chains.Call(context.Background(), llmChain, map[string]any{"text": transcription})
 
 	fmt.Printf("\n[3/4] Generating response with chat completion... %q ", completion)
 

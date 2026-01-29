@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"golang.org/x/text/unicode/norm"
 )
 
 var home, _ = os.UserHomeDir()
@@ -300,6 +301,10 @@ func (p PiperVoice) Speak(text string) error {
 	// Create piper command
 	// Piper reads from stdin and outputs WAV to stdout
 	piperCmd := exec.Command("piper-tts", "--model", modelFile, "--output_file", "-")
+
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = norm.NFC.String(text)
+	fmt.Printf("text: %q\n", text)
 	piperCmd.Stdin = bytes.NewBufferString(text)
 
 	// Pipe piper output to aplay (or use paplay for PulseAudio)
