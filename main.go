@@ -16,8 +16,9 @@ import (
 
 	"github.com/gordonklaus/portaudio"
 	"github.com/tmc/langchaingo/chains"
-	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/prompts"
+	"golang.org/x/term"
 )
 
 const (
@@ -43,8 +44,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Voice Assistant - Press Ctrl+C to stop recording")
-	fmt.Println("==============================================")
+	fmt.Println("Voice Assistant")
+	fmt.Println("===============")
+	fmt.Println("Press Ctrl+B to start recording, Ctrl+C to quit")
 
 	llm, err := NewLLM()
 	if err != nil {
@@ -52,46 +54,95 @@ func main() {
 		os.Exit(1)
 	}
 
-	llmChain := chains.NewLLMChain(llm, prompts.NewPromptTemplate("Du bist deutsch lehrer {{ .text }} ", []string{"text"}))
+	prompt := prompts.NewPromptTemplate(
+		`Du bist ein deutscher Lehrer. Antworte auf die folgende Frage oder Aussage auf Deutsch.
 
-	// Record audio
-	fmt.Println("\n[1/3] Recording audio... (Press Ctrl+C to stop)")
-	audioData, err := recordAudio()
-	if err != nil {
-		fmt.Printf("Error recording audio: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Recorded %d bytes of audio\n", len(audioData))
+Bisheriger Gesprächsverlauf:
+{{.history}}
 
-	// Transcribe with Groq
-	fmt.Println("\n[2/3] Transcribing audio with Groq...")
-	transcription, err := transcribeWithGroq(audioData, apiKey)
-	if err != nil {
-		fmt.Printf("Error transcribing audio: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Transcription: %s\n", transcription)
-
-	transcription = "Wie gehts es dir? Sprichst du gut deutsch?"
-	output, err := chains.Call(context.Background(), llmChain, map[string]any{"text": transcription})
-
-	fmt.Printf("\n[3/4] Generating response with chat completion... %q ", completion)
-
-	if err != nil {
-		fmt.Printf("Error generating chat completion: %v\n", err)
-		os.Exit(1)
-	}
-	// Generate speech with Piper TTS
-	fmt.Println("\n[4/4] Generating speech with Piper TTS...")
-
+Schüler: {{.text}}
+Lehrer:`,
+		[]string{"history", "text"},
+	)
+	llmChain := chains.NewLLMChain(llm, prompt)
+	llmChain.Memory = memory.NewConversationBuffer()
 
 	piperVoice := piper.NewPiperVoice()
-	err = piperVoice.Speak(completion)
-	if err != nil {
-		fmt.Printf("Error generating speech: %v\n", err)
-		os.Exit(1)
+
+	// Main loop - wait for Ctrl+B
+	for {
+		fmt.Println("\n[Waiting] Press Ctrl+B to start recording...")
+
+		if err := waitForCtrlB(); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			continue
+		}
+
+		// Record audio
+		fmt.Println("\n[1/4] Recording audio... (Press Ctrl+C to stop)")
+		audioData, err := recordAudio()
+		if err != nil {
+			fmt.Printf("Error recording audio: %v\n", err)
+			continue
+		}
+		fmt.Printf("Recorded %d bytes of audio\n", len(audioData))
+
+		// Transcribe with Groq
+		fmt.Println("\n[2/4] Transcribing audio with Groq...")
+		transcription, err := transcribeWithGroq(audioData, apiKey)
+		if err != nil {
+			fmt.Printf("Error transcribing audio: %v\n", err)
+			continue
+		}
+		fmt.Printf("Transcription: %s\n", transcription)
+
+		// Generate LLM response
+		fmt.Println("\n[3/4] Generating response...")
+		output, err := chains.Call(context.Background(), llmChain, map[string]any{"text": transcription})
+		if err != nil {
+			fmt.Printf("Error generating chat completion: %v\n", err)
+			continue
+		}
+		completion := output["text"].(string)
+		fmt.Printf("Response: %s\n", completion)
+
+		// Generate speech with Piper TTS
+		fmt.Println("\n[4/4] Generating speech with Piper TTS...")
+		err = piperVoice.Speak(completion)
+		if err != nil {
+			fmt.Printf("Error generating speech: %v\n", err)
+			continue
+		}
+		fmt.Println("\nDone!")
 	}
-	fmt.Println("\nDone!")
+}
+
+// waitForCtrlB waits for the user to press Ctrl+B
+func waitForCtrlB() error {
+	// Save terminal state
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to set raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	buf := make([]byte, 1)
+	for {
+		_, err := os.Stdin.Read(buf)
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+
+		// Ctrl+B is ASCII 2
+		if buf[0] == 2 {
+			return nil
+		}
+		// Ctrl+C is ASCII 3 - exit program
+		if buf[0] == 3 {
+			fmt.Println("\nExiting...")
+			os.Exit(0)
+		}
+	}
 }
 
 // recordAudio captures audio from the microphone until Ctrl+C is pressed

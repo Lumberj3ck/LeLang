@@ -5,6 +5,7 @@ go 1.24.4
 require (
 	github.com/gordonklaus/portaudio v0.0.0-20230709114228-aafa478834f5
 	github.com/tmc/langchaingo v0.1.14
+	golang.org/x/term v0.34.0
 	golang.org/x/text v0.28.0
 )
 
