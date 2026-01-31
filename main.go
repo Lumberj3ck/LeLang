@@ -1,20 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/json"
+	"flag"
 	"fmt"
-	"io"
 	"lelang/piper"
 	"math/rand"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"strings"
+	"time"
 
-	"github.com/gordonklaus/portaudio"
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/prompts"
@@ -46,6 +41,7 @@ type model struct {
 	viewport viewport.Model
 	content  string
 	ready    bool
+	recorder *Recorder
 }
 
 func initialModel() model {
@@ -79,9 +75,11 @@ Lehrer:`,
 		content.WriteString(row + "\n")
 	}
 
+
 	return model{
 		llmChain: llmChain,
 		content: content.String(),
+		recorder: NewRecorder(),
 	}
 }
 
@@ -89,13 +87,32 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
+func EmptyCmd() tea.Msg{
+	return ""
+}
+
+type RecordingStarted struct{}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch k := msg.String(); k {
 		case "ctrl+b":
+			if time.Since(m.recorder.Stopped) < time.Second {
+				return m, EmptyCmd
+			}
+			
+			if m.recorder.Recording() {
+				m.recorder.Stop()
+				m.viewport.SetContent("Stopped recording")
+				return m, func() tea.Msg {
+					return ""
+				}
+			}
 
+			m.viewport.SetContent("Starting recording...")
 			return m, func() tea.Msg {
+				m.recorder.Start()
 				return ""
 			}
 		case "ctrl+c", "q", "esc":
@@ -141,23 +158,29 @@ func (m model) View() string {
 }
 
 func main() {
+	serverTui := flag.Bool("serve-tui", false, "Start a TUI")
+	flag.Parse()
 
-	p := tea.NewProgram(
-		initialModel(),
-		tea.WithAltScreen(),       // use the full size of the terminal in its "alternate screen buffer"
-		tea.WithMouseCellMotion(), // turn on mouse support so we can track the mouse wheel
-	)
-	f, err := tea.LogToFile("tea.log", "")
-	if err != nil{
-		fmt.Println("could not run program:", err)
-		os.Exit(1)
-	}
-	defer f.Close()
+	if 	*serverTui {
+		p := tea.NewProgram(
+			initialModel(),
+			tea.WithAltScreen(),       // use the full size of the terminal in its "alternate screen buffer"
+			tea.WithMouseCellMotion(), // turn on mouse support so we can track the mouse wheel
+		)
+		f, err := tea.LogToFile("tea.log", "")
+		if err != nil{
+			fmt.Println("could not run program:", err)
+			os.Exit(1)
+		}
+		defer f.Close()
 
 
-	if _, err := p.Run(); err != nil {
-		fmt.Println("could not run program:", err)
-		os.Exit(1)
+		if _, err := p.Run(); err != nil {
+			fmt.Println("could not run program:", err)
+			os.Exit(1)
+		}
+	} else {
+		loop()
 	}
 }
 
@@ -191,6 +214,7 @@ Lehrer:`,
 	)
 	llmChain := chains.NewLLMChain(llm, prompt)
 	llmChain.Memory = memory.NewConversationBuffer()
+	recorder := NewRecorder()
 
 	piperVoice := piper.NewPiperVoice()
 
@@ -205,16 +229,15 @@ Lehrer:`,
 
 		// Record audio
 		fmt.Println("\n[1/4] Recording audio... (Press Ctrl+B to stop)")
-		audioData, err := recordAudio()
-		if err != nil {
-			fmt.Printf("Error recording audio: %v\n", err)
-			continue
-		}
-		fmt.Printf("Recorded %d bytes of audio\n", len(audioData))
+		go recorder.Start()
+
+		fmt.Printf("Recorded %d bytes of audio\n", len(recorder.content))
+
+		recorder.Stop()
 
 		// Transcribe with Groq
 		fmt.Println("\n[2/4] Transcribing audio with Groq...")
-		transcription, err := transcribeWithGroq(audioData, apiKey)
+		transcription, err := transcribeWithGroq(recorder.content, apiKey)
 		if err != nil {
 			fmt.Printf("Error transcribing audio: %v\n", err)
 			continue
@@ -269,168 +292,3 @@ func waitForCtrlB() error {
 	}
 }
 
-// recordAudio captures audio from the microphone until Ctrl+C is pressed
-func recordAudio() ([]byte, error) {
-	err := portaudio.Initialize()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize PortAudio: %w", err)
-	}
-	defer portaudio.Terminate()
-
-	// Create buffer for audio samples
-	buffer := make([]int16, framesPerBuffer)
-	var allSamples []int16
-
-	// Open default input stream
-	stream, err := portaudio.OpenDefaultStream(channels, 0, float64(sampleRate), framesPerBuffer, buffer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open stream: %w", err)
-	}
-	defer stream.Close()
-
-	err = stream.Start()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start stream: %w", err)
-	}
-
-	// Handle Ctrl+C to stop recording
-	done := make(chan bool)
-
-	go func() {
-		if err := waitForCtrlB(); err != nil {
-			fmt.Printf("Error: %v\n", err)
-		}
-		fmt.Println("\nStopping recording...")
-		done <- true
-	}()
-
-	// Record until signal received
-recording:
-	for {
-		select {
-		case <-done:
-			break recording
-		default:
-			err := stream.Read()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read from stream: %w", err)
-			}
-			// Copy buffer to avoid overwriting
-			samples := make([]int16, len(buffer))
-			copy(samples, buffer)
-			allSamples = append(allSamples, samples...)
-		}
-	}
-
-	err = stream.Stop()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stop stream: %w", err)
-	}
-
-	// Convert to WAV format
-	wavData := samplesToWAV(allSamples, sampleRate, channels)
-	return wavData, nil
-}
-
-// samplesToWAV converts raw audio samples to WAV format
-func samplesToWAV(samples []int16, sampleRate, channels int) []byte {
-	var buf bytes.Buffer
-
-	dataSize := len(samples) * 2 // 2 bytes per sample (16-bit)
-	fileSize := wavHeaderSize + dataSize - 8
-
-	// RIFF header
-	buf.WriteString("RIFF")
-	binary.Write(&buf, binary.LittleEndian, int32(fileSize))
-	buf.WriteString("WAVE")
-
-	// fmt subchunk
-	buf.WriteString("fmt ")
-	binary.Write(&buf, binary.LittleEndian, int32(16))         // Subchunk1Size (16 for PCM)
-	binary.Write(&buf, binary.LittleEndian, int16(1))          // AudioFormat (1 for PCM)
-	binary.Write(&buf, binary.LittleEndian, int16(channels))   // NumChannels
-	binary.Write(&buf, binary.LittleEndian, int32(sampleRate)) // SampleRate
-	byteRate := sampleRate * channels * 2                      // ByteRate
-	binary.Write(&buf, binary.LittleEndian, int32(byteRate))
-	blockAlign := channels * 2 // BlockAlign
-	binary.Write(&buf, binary.LittleEndian, int16(blockAlign))
-	binary.Write(&buf, binary.LittleEndian, int16(16)) // BitsPerSample
-
-	// data subchunk
-	buf.WriteString("data")
-	binary.Write(&buf, binary.LittleEndian, int32(dataSize))
-
-	// Write audio data
-	for _, sample := range samples {
-		binary.Write(&buf, binary.LittleEndian, sample)
-	}
-
-	return buf.Bytes()
-}
-
-// transcribeWithGroq sends audio to Groq API for transcription
-func transcribeWithGroq(audioData []byte, apiKey string) (string, error) {
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-
-	// Add audio file
-	part, err := writer.CreateFormFile("file", "audio.wav")
-	if err != nil {
-		return "", fmt.Errorf("failed to create form file: %w", err)
-	}
-	_, err = part.Write(audioData)
-	if err != nil {
-		return "", fmt.Errorf("failed to write audio data: %w", err)
-	}
-
-	// Add model field
-	err = writer.WriteField("model", "whisper-large-v3")
-	if err != nil {
-		return "", fmt.Errorf("failed to write model field: %w", err)
-	}
-
-	// Add response format
-	err = writer.WriteField("response_format", "json")
-	if err != nil {
-		return "", fmt.Errorf("failed to write response_format field: %w", err)
-	}
-
-	err = writer.Close()
-	if err != nil {
-		return "", fmt.Errorf("failed to close writer: %w", err)
-	}
-
-	// Create request
-	req, err := http.NewRequest("POST", groqAPIURL, &requestBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	// Send request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var transcriptionResp GroqTranscriptionResponse
-	err = json.Unmarshal(body, &transcriptionResp)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return transcriptionResp.Text, nil
-}
