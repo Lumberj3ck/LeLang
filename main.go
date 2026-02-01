@@ -13,8 +13,6 @@ import (
 	"github.com/tmc/langchaingo/memory"
 	"github.com/tmc/langchaingo/prompts"
 
-	"github.com/muesli/reflow/wordwrap"
-
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -69,7 +67,6 @@ Lehrer:`,
 	llmChain := chains.NewLLMChain(llm, prompt)
 	llmChain.Memory = memory.NewConversationBuffer()
 	piperVoice := piper.NewPiperVoice()
-
 	return model{
 		llmChain:   llmChain,
 		recorder:   NewRecorder(),
@@ -126,7 +123,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StatusChanged:
 		m.Status = msg.status
 	case ReadyCompletion:
-		wrappedCompletion := wordwrap.String(msg.completion, m.viewport.Width)
+		wrappedCompletion := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.completion)
 		m.content = fmt.Sprintf("%s\nAI: %s \n", m.content, wrappedCompletion)
 		m.viewport.SetContent(m.content)
 		m.viewport.GotoBottom()
@@ -135,7 +132,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, Speak(msg.completion, m)
 
 	case TranscriptionReceived:
-		wrappedTrascription := wordwrap.String(msg.transcription, m.viewport.Width)
+		wrappedTrascription := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.transcription)
 		m.content = fmt.Sprintf("%s\nYou:%s \n", m.content, wrappedTrascription)
 		m.viewport.SetContent(m.content)
 		m.viewport.GotoBottom()
