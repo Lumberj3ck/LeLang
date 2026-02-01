@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"lelang/piper"
 	"log"
-	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -43,6 +42,7 @@ type model struct {
 	ready    bool
 	recorder *Recorder
 	apiKey string
+	Status string
 }
 
 func initialModel(apiKey string) model {
@@ -67,21 +67,11 @@ Lehrer:`,
 	llmChain := chains.NewLLMChain(llm, prompt)
 	llmChain.Memory = memory.NewConversationBuffer()
 
-	var content strings.Builder
-	for range 1000 {
-		s := "alsd;fasfjqpowejr1384j195j0234jl"
-		ri := rand.Intn(len(s))
-		row := strings.Repeat(string(s[ri]), 100)
-
-		content.WriteString(row + "\n")
-	}
-
-
 	return model{
 		llmChain: llmChain,
-		content: content.String(),
 		recorder: NewRecorder(),
 		apiKey: apiKey,
+		Status: "Ready",
 	}
 }
 
@@ -101,7 +91,10 @@ type TranscriptionReceived struct {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case TranscriptionReceived:
-		m.viewport.SetContent(msg.transcription)
+		transcript := fmt.Sprintf("You: %s \n", msg.transcription)
+		m.content = m.content + "\n" + transcript
+		m.viewport.SetContent(m.content)	
+
 	case tea.KeyMsg:
 		switch k := msg.String(); k {
 		case "ctrl+b":
@@ -111,7 +104,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			
 			if m.recorder.IsRecording() {
 				m.recorder.Stop()
-				m.viewport.SetContent("Stopped recording")
+				m.Status = "Ready"
 				return m, func() tea.Msg {
 					transcription, err := transcribeWithGroq(m.recorder.Content, m.apiKey)
 					log.Println(transcription)
@@ -123,7 +116,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			m.viewport.SetContent("Starting recording...")
+			m.Status = "Recording"
 			return m, func() tea.Msg {
 				m.recorder.Start()
 				return ""
@@ -156,14 +149,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 var titleStyle = func() lipgloss.Style {
 		b := lipgloss.RoundedBorder()
-		b.Right = "├"
+		b.BottomRight = "┴"
 		return lipgloss.NewStyle().BorderStyle(b).Padding(0, 1)
 	}()
 
 func (m model) headerView() string {
-	title := titleStyle.Render("Mr. Pager")
-	line := strings.Repeat("─", max(0, m.viewport.Width-lipgloss.Width(title)))
-	return lipgloss.JoinHorizontal(lipgloss.Center, title, line)
+	title := titleStyle.Render("LeLang")
+
+	blockLength := max(0, m.viewport.Width-lipgloss.Width(title))
+
+	line := strings.Repeat("─",  blockLength)
+
+	statusLength := max(0, blockLength - lipgloss.Width(m.Status))
+	statusLine := strings.Repeat(" ", statusLength) + m.Status
+
+	s := lipgloss.JoinVertical(lipgloss.Center, statusLine, line)
+
+	return lipgloss.JoinHorizontal(lipgloss.Center, title, s)
 }
 
 func (m model) View() string {
