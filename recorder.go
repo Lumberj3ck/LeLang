@@ -15,7 +15,6 @@ import (
 	"github.com/gen2brain/malgo"
 )
 
-
 type Recorder struct {
 	recording bool
 	Content   []byte

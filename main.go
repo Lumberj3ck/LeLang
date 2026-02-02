@@ -95,6 +95,7 @@ type StatusChanged struct {
 }
 type ReadyCompletion struct {
 	completion string
+	addContent bool
 }
 
 func GetLlmCompletion(text string, m model) tea.Cmd {
@@ -106,16 +107,27 @@ func GetLlmCompletion(text string, m model) tea.Cmd {
 		if output["text"] == nil {
 			return StatusChanged{status: "No completion"}
 		}
-		return ReadyCompletion{completion: output["text"].(string)}
+		return ReadyCompletion{completion: output["text"].(string), addContent: true}
 	}
+}
+
+type DownloadModel struct {
+	model      string
+	language   string
+	completion string
 }
 
 func Speak(text string, m model) tea.Cmd {
 	return func() tea.Msg {
 		err := m.piperVoice.Speak(text)
 		if err != nil {
-			log.Printf("Error speaking: %v\n", err)
-			return StatusChanged{status: "Failed to speak"}
+			switch err := err.(type) {
+			case piper.ErrorModelNotFound:
+				return DownloadModel{model: err.Model, language: err.Language, completion: text}
+			default:
+				log.Printf("Error speaking: %v\n", err)
+				return StatusChanged{status: "Failed to speak"}
+			}
 		}
 		return StatusChanged{status: "Ready"}
 	}
@@ -150,18 +162,28 @@ func HighlightFocusWord(m model) string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case DownloadModel:
+		m.status = "Downloading tts model"
+		return m, func() tea.Msg {
+			err := piper.DownloadVoice(msg.language, msg.model)
+			if err != nil {
+				return StatusChanged{status: "Failed to download model"}
+			}
+			return ReadyCompletion{completion: msg.completion, addContent: false}
+		}
+
 	case StatusChanged:
 		m.status = msg.status
 	case ReadyCompletion:
+		if msg.addContent {
+			wrappedCompletion := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.completion)
+			m.content = fmt.Sprintf("%sAI: %s \n", m.content, wrappedCompletion)
+			highlightedCompletion := HighlightFocusWord(m)
+			m.viewport.SetContent(highlightedCompletion)
+			m.viewport.GotoBottom()
+		}
 
-		wrappedCompletion := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.completion)
-		m.content = fmt.Sprintf("%sAI: %s \n", m.content, wrappedCompletion)
-		highlightedCompletion := HighlightFocusWord(m)
-
-		m.viewport.SetContent(highlightedCompletion)
-		m.viewport.GotoBottom()
 		m.status = "Speaking"
-
 		return m, Speak(msg.completion, m)
 
 	case TranscriptionReceived:
@@ -212,7 +234,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			if m.focusWord+1 >= len(strings.Split(focusedRow, " ")){
+			if m.focusWord+1 >= len(strings.Split(focusedRow, " ")) {
 				m.focusRow++
 				m.focusWord = -1
 			}

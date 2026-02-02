@@ -283,6 +283,15 @@ func NewPiperVoice(options ...PiperOption) *PiperVoice {
 	return &pv
 }
 
+type ErrorModelNotFound struct {
+	Model    string
+	Language string
+}
+
+func (e ErrorModelNotFound) Error() string {
+	return fmt.Sprintf("Model %s not found for language %s", e.Model, e.Language)
+}
+
 // speakWithPiper generates speech using Piper TTS and plays it
 func (p PiperVoice) Speak(text string) error {
 	modelFile := filepath.Join(voicesDir, p.Model)
@@ -290,10 +299,7 @@ func (p PiperVoice) Speak(text string) error {
 
 	slog.Debug("Searching for", "modelFile", modelFile)
 	if err != nil {
-		err = DownloadVoice(p.Language, p.Model)
-		if err != nil {
-			return err
-		}
+		return ErrorModelNotFound{Model: p.Model, Language: p.Language}
 	}
 
 	// Create piper command
@@ -332,7 +338,7 @@ func (p PiperVoice) Speak(text string) error {
 	}
 
 	// Wait for both commands to finish
-	go func(){
+	go func() {
 		piperErr := piperCmd.Wait()
 
 		if piperErr != nil {
