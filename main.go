@@ -114,6 +114,7 @@ func Speak(text string, m model) tea.Cmd {
 	return func() tea.Msg {
 		err := m.piperVoice.Speak(text)
 		if err != nil {
+			log.Printf("Error speaking: %v\n", err)
 			return StatusChanged{status: "Failed to speak"}
 		}
 		return StatusChanged{status: "Ready"}
@@ -269,9 +270,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			viewport.SetContent(m.content)
 			m.viewport = viewport
 			m.ready = true
-			return m, func() tea.Msg {
-				return ReadyCompletion{completion: "Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read Read  "}
-			}
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - headerHeight

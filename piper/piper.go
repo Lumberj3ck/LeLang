@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -189,12 +191,13 @@ func ListVoices(language string) error {
 // DownloadVoice downloads a voice model and its config file
 func DownloadVoice(language string, voice string) error {
 	voices, err := fetchVoices()
+	log.Printf("Voices: %v\n", voices)
 	if err != nil {
 		return err
 	}
 
 	// Build the voice key to look up
-	voiceKey := fmt.Sprintf("%s-%s", language, voice)
+	voiceKey := strings.TrimRight(voice, ".onnx")
 
 	voiceInfo, exists := voices[voiceKey]
 	if !exists {
@@ -224,8 +227,6 @@ func DownloadVoice(language string, voice string) error {
 		// Voice keys are like "en_US-lessac-medium", files are like "en_US-lessac-medium.onnx"
 		downloadURL := fmt.Sprintf("%s/%s", baseDownloadURL, filename)
 
-		fmt.Printf("Downloading %s...\n", filename)
-
 		resp, err := http.Get(downloadURL)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", filename, err)
@@ -246,8 +247,6 @@ func DownloadVoice(language string, voice string) error {
 		if err := saveToFile(data, localFilename); err != nil {
 			return err
 		}
-
-		fmt.Printf("Saved %s to %s\n", localFilename, voicesDir)
 	}
 
 	return nil
@@ -305,20 +304,20 @@ func (p PiperVoice) Speak(text string) error {
 	text = norm.NFC.String(text)
 	piperCmd.Stdin = bytes.NewBufferString(text)
 
-	// Pipe piper output to aplay (or use paplay for PulseAudio)
-	aplayCmd := exec.Command("aplay", "-r", "22050", "-f", "S16_LE", "-t", "wav", "-")
+	// Pipe piper output to paplay
+	paplayCmd := exec.Command("paplay")
 
-	// Connect piper stdout to aplay stdin
+	// Connect piper stdout to paplay stdin
 	pipe, err := piperCmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
-	aplayCmd.Stdin = pipe
+	paplayCmd.Stdin = pipe
 
 	// Capture stderr for debugging
 	var piperStderr, aplayStderr bytes.Buffer
 	piperCmd.Stderr = &piperStderr
-	aplayCmd.Stderr = &aplayStderr
+	paplayCmd.Stderr = &aplayStderr
 
 	// Start both commands
 	err = piperCmd.Start()
@@ -326,10 +325,10 @@ func (p PiperVoice) Speak(text string) error {
 		return fmt.Errorf("failed to start piper: %w", err)
 	}
 
-	err = aplayCmd.Start()
+	err = paplayCmd.Start()
 	if err != nil {
 		piperCmd.Process.Kill()
-		return fmt.Errorf("failed to start aplay: %w", err)
+		return fmt.Errorf("failed to start paplay: %w", err)
 	}
 
 	// Wait for both commands to finish
@@ -341,10 +340,10 @@ func (p PiperVoice) Speak(text string) error {
 		}
 	}()
 
-	aplayErr := aplayCmd.Wait()
+	aplayErr := paplayCmd.Wait()
 
 	if aplayErr != nil {
-		return fmt.Errorf("aplay error: %w, stderr: %s", aplayErr, aplayStderr.String())
+		return fmt.Errorf("paplay error: %w, stderr: %s", aplayErr, aplayStderr.String())
 	}
 
 	return nil
