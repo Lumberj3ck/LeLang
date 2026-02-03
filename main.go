@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"lelang/piper"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -45,7 +49,9 @@ type model struct {
 	status      string
 	focusWord   int
 	focusRow    int
+	fullWidth   int
 	cancelSpeak context.CancelFunc
+	wordsMeaning map[string]string
 }
 
 func initialModel(apiKey string) model {
@@ -76,6 +82,7 @@ Lehrer:`,
 		apiKey:     apiKey,
 		status:     "Ready",
 		piperVoice: piperVoice,
+		wordsMeaning: make(map[string]string),
 	}
 }
 
@@ -163,6 +170,59 @@ func HighlightFocusWord(m model) string {
 	return st.String()
 }
 
+type TranslationReceived struct {
+	Word         string
+	Translation  string
+}
+
+func GetTranslation(word string, m model) tea.Cmd {
+	return func() tea.Msg {
+		baseURL := os.Getenv("LIBRETRANSLATE_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:5000"
+		}
+
+		reqBody, err := json.Marshal(map[string]string{
+			"q":      word,
+			"source": "de",
+			"target": "en",
+			"format": "text",
+		})
+		if err != nil {
+			log.Printf("Error marshaling translation request: %v", err)
+			return StatusChanged{status: "Failed to translate"}
+		}
+
+		resp, err := http.Post(baseURL+"/translate", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			log.Printf("Error calling LibreTranslate: %v", err)
+			return StatusChanged{status: "Failed to translate"}
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading translation response: %v", err)
+			return StatusChanged{status: "Failed to translate"}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("LibreTranslate error (status %d): %s", resp.StatusCode, string(body))
+			return StatusChanged{status: "Failed to translate"}
+		}
+
+		var result struct {
+			TranslatedText string `json:"translatedText"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			log.Printf("Error parsing translation response: %v", err)
+			return StatusChanged{status: "Failed to translate"}
+		}
+
+		return TranslationReceived{Word: word, Translation: result.TranslatedText}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DownloadModel:
@@ -200,20 +260,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, GetLlmCompletion(msg.transcription, m)
 
+	case TranslationReceived:
+		m.wordsMeaning[msg.Word] = msg.Translation
+
 	case tea.KeyMsg:
 		switch k := msg.String(); k {
+		case "enter":
+			selectedWord := m.getFocusedWord()
+			return m, GetTranslation(selectedWord, m)
+
 		case "esc":
 			if m.cancelSpeak != nil {
 				m.cancelSpeak()
 			}
 			m.status = "Ready"
 		case "j":
-			m.focusRow++
-
 			rows := strings.Split(strings.TrimSpace(m.content), "\n")
-			if len(rows) == 0 {
+			if len(rows) == 0 || len(m.content) == 0 {
 				break
 			}
+			if m.focusRow+1 >= len(rows) {
+				break
+			}
+			m.focusRow++
 
 			focusedRow := rows[m.focusRow]
 			m.focusWord = min(max(len(strings.Split(strings.TrimSpace(focusedRow), " ")) - 1, 0), m.focusWord)
@@ -300,16 +369,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tea.WindowSizeMsg:
+		m.fullWidth = msg.Width
 		headerHeight := lipgloss.Height(m.headerView()) + 1
+		viewportWidth := msg.Width * 3 / 4
 
 		if !m.ready {
-			viewport := viewport.New(msg.Width, msg.Height-headerHeight)
+			viewport := viewport.New(viewportWidth, msg.Height-headerHeight)
 			viewport.YPosition = headerHeight
 			viewport.SetContent(m.content)
 			m.viewport = viewport
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width
+			m.viewport.Width = viewportWidth
 			m.viewport.Height = msg.Height - headerHeight
 		}
 	}
@@ -327,11 +398,17 @@ var titleStyle = func() lipgloss.Style {
 	b.BottomRight = "┴"
 	return lipgloss.NewStyle().BorderStyle(b).Padding(0, 1)
 }()
+func (m model) getFocusedWord() string {
+	rows := strings.Split(strings.TrimSpace(m.content), "\n")
+
+	row := strings.TrimSpace(rows[m.focusRow])
+	return strings.Split(row, " ")[m.focusWord]
+}
 
 func (m model) headerView() string {
 	title := titleStyle.Render("LeLang")
 
-	blockLength := max(0, m.viewport.Width-lipgloss.Width(title))
+	blockLength := max(0, m.fullWidth-lipgloss.Width(title))
 
 	line := strings.Repeat("─", blockLength)
 
@@ -343,8 +420,26 @@ func (m model) headerView() string {
 	return lipgloss.JoinHorizontal(lipgloss.Center, title, s)
 }
 
+func (m model) sidebarView() string { 
+	b := lipgloss.NewStyle().
+		Height(m.viewport.Height).
+		Width(m.viewport.Width * 1 / 4).
+		Border(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderTop(false).
+		BorderRight(false).
+		BorderBottom(false)
+	
+	var c strings.Builder
+	for k, v := range m.wordsMeaning {
+		c.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+	}
+	return b.Render(c.String())
+}
+
 func (m model) View() string {
-	return fmt.Sprintf("%s\n%s\n", m.headerView(), m.viewport.View())
+	content := lipgloss.JoinHorizontal(lipgloss.Center, m.viewport.View(), m.sidebarView())
+	return fmt.Sprintf("%s\n%s\n", m.headerView(), content)
 }
 
 func main() {
