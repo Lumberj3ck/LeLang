@@ -216,20 +216,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			focusedRow := rows[m.focusRow]
-			m.focusWord = min(len(strings.Split(focusedRow, " ")), m.focusWord)
+			m.focusWord = min(max(len(strings.Split(strings.TrimSpace(focusedRow), " ")) - 1, 0), m.focusWord)
 
 			highlightedCompletion := HighlightFocusWord(m)
 			m.viewport.SetContent(highlightedCompletion)
 		case "k":
+			if m.focusRow - 1 < 0 {
+				break
+			}
 			m.focusRow--
-
 			rows := strings.Split(strings.TrimSpace(m.content), "\n")
 			if len(rows) == 0 {
 				break
 			}
 
 			focusedRow := rows[m.focusRow]
-			m.focusWord = min(len(strings.Split(focusedRow, " ")), m.focusWord)
+			m.focusWord = min(max(len(strings.Split(strings.TrimSpace(focusedRow), " ")) - 1, 0), m.focusWord)
 
 			highlightedCompletion := HighlightFocusWord(m)
 			m.viewport.SetContent(highlightedCompletion)
@@ -244,7 +246,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			if m.focusWord+1 >= len(strings.Split(focusedRow, " ")) {
+			if m.focusWord+1 >= len(strings.Split(strings.TrimSpace(focusedRow), " ")) {
 				m.focusRow++
 				m.focusWord = -1
 			}
