@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,6 +39,8 @@ const (
 	scrolloff = 2
 )
 
+var isAlpha = regexp.MustCompile(`\w+`)
+
 type GroqTranscriptionResponse struct {
 	Text string `json:"text"`
 }
@@ -55,7 +58,7 @@ type model struct {
 	focusRow    int
 	fullWidth   int
 	cancelSpeak context.CancelFunc
-	wordsMeaning map[string]string
+	wordsStore  *WordsStore
 }
 
 func initialModel(apiKey string) model {
@@ -86,7 +89,7 @@ Lehrer:`,
 		apiKey:     apiKey,
 		status:     "Ready",
 		piperVoice: piperVoice,
-		wordsMeaning: make(map[string]string),
+		wordsStore: NewWordsStore(),
 	}
 }
 
@@ -260,13 +263,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, GetLlmCompletion(msg.transcription, m)
 
 	case TranslationReceived:
-		m.wordsMeaning[msg.Word] = msg.Translation
+		m.wordsStore.Add(msg.Word, msg.Translation)
 
 	case tea.KeyMsg:
 		switch k := msg.String(); k {
 		case "enter":
 			selectedWord := m.getFocusedWord()
-			return m, GetTranslation(selectedWord, m)
+			clearedWord := isAlpha.FindString(selectedWord)
+			if clearedWord == "" {
+				m.status = "Nothing to translate"
+				return m, EmptyCmd
+			}
+			return m, GetTranslation(clearedWord, m)
 
 		case "esc":
 			if m.cancelSpeak != nil {
@@ -453,12 +461,8 @@ func (m model) sidebarView() string {
 		BorderTop(false).
 		BorderRight(false).
 		BorderBottom(false)
-	
-	var c strings.Builder
-	for k, v := range m.wordsMeaning {
-		c.WriteString(fmt.Sprintf("%s: %s\n", k, v))
-	}
-	return b.Render(c.String())
+
+	return b.Render(m.wordsStore.List())
 }
 
 func (m model) View() string {
