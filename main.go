@@ -225,10 +225,17 @@ func GetTranslation(word string, m model) tea.Cmd {
 	}
 }
 
+func (m *model) UpdateStatus(status string) {
+	if m.recorder.IsRecording() || m.piperVoice.IsSpeaking() {
+		return 
+	}
+	m.status = status
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DownloadModel:
-		m.status = "Downloading tts model"
+		m.UpdateStatus("Downloading tts model")
 		return m, func() tea.Msg {
 			err := piper.DownloadVoice(msg.language, msg.model)
 			if err != nil {
@@ -238,7 +245,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case StatusChanged:
-		m.status = msg.status
+		m.UpdateStatus(msg.status)
 	case ReadyCompletion:
 		if msg.addContent {
 			wrappedCompletion := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.completion)
@@ -248,7 +255,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoBottom()
 		}
 
-		m.status = "Speaking"
+		m.UpdateStatus("Speaking")
+
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelSpeak = cancel
 		return m, Speak(ctx, msg.completion, m)
@@ -271,7 +279,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			selectedWord := m.getFocusedWord()
 			clearedWord := isAlpha.FindString(selectedWord)
 			if clearedWord == "" {
-				m.status = "Nothing to translate"
+				m.UpdateStatus("Nothing to translate")
 				return m, EmptyCmd
 			}
 			return m, GetTranslation(clearedWord, m)
@@ -280,7 +288,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cancelSpeak != nil {
 				m.cancelSpeak()
 			}
-			m.status = "Ready"
+			m.UpdateStatus("Ready")
 		case "j":
 			rows := strings.Split(strings.TrimSpace(m.content), "\n")
 			if len(rows) == 0 || len(m.content) == 0 {
@@ -380,7 +388,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.recorder.IsRecording() {
 				m.recorder.Stop()
-				m.status = "Ready"
+				m.UpdateStatus("Ready")
 				return m, func() tea.Msg {
 					transcription, err := transcribeWithGroq(m.recorder.Content, m.apiKey)
 					log.Println(transcription)
@@ -392,7 +400,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			m.status = "Recording"
+			m.UpdateStatus("Recording")
 			return m, func() tea.Msg {
 				m.recorder.Start()
 				return ""

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -256,6 +257,8 @@ func DownloadVoice(language string, voice string) error {
 type PiperVoice struct {
 	Language string
 	Model    string
+	speaking bool
+	mu       sync.RWMutex
 }
 
 type PiperOption func(*PiperVoice)
@@ -300,8 +303,14 @@ func (e StoppedSpeaking) Error() string {
 	return "Stopped speaking"
 }
 
+func (p *PiperVoice) IsSpeaking() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.speaking
+}
+
 // speakWithPiper generates speech using Piper TTS and plays it
-func (p PiperVoice) Speak(ctx context.Context, text string) error {
+func (p *PiperVoice) Speak(ctx context.Context, text string) error {
 	modelFile := filepath.Join(voicesDir, p.Model)
 	_, err := os.Stat(modelFile)
 
@@ -339,6 +348,10 @@ func (p PiperVoice) Speak(ctx context.Context, text string) error {
 		return fmt.Errorf("failed to start piper: %w", err)
 	}
 
+	p.mu.Lock()
+	p.speaking = true
+	p.mu.Unlock()
+
 	err = paplayCmd.Start()
 	if err != nil {
 		piperCmd.Process.Kill()
@@ -348,6 +361,9 @@ func (p PiperVoice) Speak(ctx context.Context, text string) error {
 	// Wait for both commands to finish
 	go func() {
 		piperErr := piperCmd.Wait()
+		p.mu.Lock()
+		p.speaking = false
+		p.mu.Unlock()
 
 		if piperErr != nil {
 			slog.Info("piper error", "error", piperErr)
@@ -355,6 +371,10 @@ func (p PiperVoice) Speak(ctx context.Context, text string) error {
 	}()
 
 	aplayErr := paplayCmd.Wait()
+
+	p.mu.Lock()
+	p.speaking = false
+	p.mu.Unlock()
 
 	if aplayErr != nil && aplayErr != context.Canceled {
 		return StoppedSpeaking{}

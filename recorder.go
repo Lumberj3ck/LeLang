@@ -21,7 +21,7 @@ type Recorder struct {
 	done      chan struct{}
 	finished  chan struct{}
 	Stopped   time.Time
-	mu        sync.Mutex
+	mu        sync.RWMutex
 }
 
 func NewRecorder() *Recorder {
@@ -33,6 +33,8 @@ func NewRecorder() *Recorder {
 }
 
 func (r *Recorder) IsRecording() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.recording
 }
 
@@ -75,7 +77,10 @@ func (r *Recorder) Start() ([]byte, error) {
 		return nil, fmt.Errorf("failed to start capture device: %w", err)
 	}
 
+	r.mu.Lock()
 	r.recording = true
+	r.mu.Unlock()
+
 	log.Println("Recording")
 
 	// Wait until stopped
@@ -97,7 +102,10 @@ func (r *Recorder) Start() ([]byte, error) {
 	// Convert to WAV format
 	wavData := samplesToWAV(allSamples, sampleRate, channels)
 	r.Content = wavData
+	r.mu.Lock()
 	r.recording = false
+	r.mu.Unlock()
+
 	r.Stopped = time.Now()
 	close(r.finished)
 	return wavData, nil
