@@ -2,7 +2,8 @@
 
 A terminal-based language learning app that lets you have conversations with an AI while translating unfamiliar words on the fly — all without leaving the terminal.
 
-<img width="1914" height="1078" alt="screenshot-2026-02-04_22-41-29" src="https://github.com/user-attachments/assets/b242bccf-36a6-4095-92c6-558364d807df" />
+
+<img width="1902" height="1062" alt="screenshot-2026-02-07_16-56-41" src="https://github.com/user-attachments/assets/5430b492-eca4-4049-ab88-21b1d3592462" />
 
 
 
