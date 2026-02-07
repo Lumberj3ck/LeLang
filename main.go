@@ -150,12 +150,12 @@ func Speak(ctx context.Context, text string, m model) tea.Cmd {
 	}
 }
 
-func HighlightFocusWord(m model) string {
+func HighlightFocusWord(wrapped_text string, focusRow int, focusWord int) string {
 	var st strings.Builder
-	for i, row := range strings.Split(strings.TrimSpace(m.content), "\n") {
-		if i == m.focusRow {
+	for i, row := range strings.Split(strings.TrimSpace(wrapped_text), "\n") {
+		if i == focusRow {
 			for i, word := range strings.Split(strings.TrimSpace(row), " ") {
-				if i == m.focusWord {
+				if i == focusWord {
 					log.Printf("FocusWord: %q %v", word, i)
 					st.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(word))
 				} else {
@@ -232,6 +232,15 @@ func (m *model) UpdateStatus(status string) {
 	m.status = status
 }
 
+func setViewportContent(m *model, content string) {
+	content = lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+	m.viewport.SetContent(content)
+}
+
+func getWrappedContent(content string, width int) string {
+	return lipgloss.NewStyle().Width(width).Render(content)
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DownloadModel:
@@ -248,10 +257,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.UpdateStatus(msg.status)
 	case ReadyCompletion:
 		if msg.addContent {
-			wrappedCompletion := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.completion)
-			m.content = fmt.Sprintf("%sAI: %s \n", m.content, wrappedCompletion)
-			highlightedCompletion := HighlightFocusWord(m)
-			m.viewport.SetContent(highlightedCompletion)
+			m.content = fmt.Sprintf("%sAI: %s \n", m.content, msg.completion)
+			highlightedCompletion := HighlightFocusWord(m.content, m.focusRow, m.focusWord)
+			setViewportContent(&m, highlightedCompletion)
 			m.viewport.GotoBottom()
 		}
 
@@ -262,11 +270,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, Speak(ctx, msg.completion, m)
 
 	case TranscriptionReceived:
-		wrappedTrascription := lipgloss.NewStyle().Width(m.viewport.Width).Render(msg.transcription)
-		m.content = fmt.Sprintf("%sYou:%s \n", m.content, wrappedTrascription)
-
-		highlighted := HighlightFocusWord(m)
-		m.viewport.SetContent(highlighted)
+		m.content = fmt.Sprintf("%sYou:%s \n", m.content, msg.transcription)
+		highlighted := HighlightFocusWord(m.content, m.focusRow, m.focusWord)
+		setViewportContent(&m, highlighted)
 		m.viewport.GotoBottom()
 		return m, GetLlmCompletion(msg.transcription, m)
 
@@ -290,8 +296,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.UpdateStatus("Ready")
 		case "j":
-			rows := strings.Split(strings.TrimSpace(m.content), "\n")
-			if len(rows) == 0 || len(m.content) == 0 {
+			wrappedCompletion := getWrappedContent(m.content, m.viewport.Width)
+			rows := strings.Split(strings.TrimSpace(wrappedCompletion), "\n")
+			if len(rows) == 0 || len(wrappedCompletion) == 0 {
 				break
 			}
 			if m.focusRow+1 >= len(rows) {
@@ -302,8 +309,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focusedRow := rows[m.focusRow]
 			m.focusWord = min(max(len(strings.Split(strings.TrimSpace(focusedRow), " "))-1, 0), m.focusWord)
 
-			highlightedCompletion := HighlightFocusWord(m)
-			m.viewport.SetContent(highlightedCompletion)
+			highlightedCompletion := HighlightFocusWord(wrappedCompletion, m.focusRow, m.focusWord)
+			setViewportContent(&m, highlightedCompletion)
+			log.Printf("FocusWord j: %v %v", m.focusWord, m.focusRow)
 
 			// If we're not at scrolloff, don't scroll
 			visibleLines := m.viewport.VisibleLineCount()
@@ -315,7 +323,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			m.focusRow--
-			rows := strings.Split(strings.TrimSpace(m.content), "\n")
+
+			wrappedCompletion := getWrappedContent(m.content, m.viewport.Width)
+			rows := strings.Split(strings.TrimSpace(wrappedCompletion), "\n")
 			if len(rows) == 0 {
 				break
 			}
@@ -323,15 +333,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focusedRow := rows[m.focusRow]
 			m.focusWord = min(max(len(strings.Split(strings.TrimSpace(focusedRow), " "))-1, 0), m.focusWord)
 
-			highlightedCompletion := HighlightFocusWord(m)
-			m.viewport.SetContent(highlightedCompletion)
+			highlightedCompletion := HighlightFocusWord(wrappedCompletion, m.focusRow, m.focusWord)
+			setViewportContent(&m, highlightedCompletion)
 
 			// If we're not at scrolloff, don't scroll
 			if m.focusRow-(m.viewport.YOffset-1) > scrolloff {
 				return m, EmptyCmd
 			}
 		case "w":
-			rows := strings.Split(strings.TrimSpace(m.content), "\n")
+			wrappedCompletion := getWrappedContent(m.content, m.viewport.Width)
+			rows := strings.Split(strings.TrimSpace(wrappedCompletion), "\n")
 			if len(rows) == 0 {
 				break
 			}
@@ -347,8 +358,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.focusWord++
-			highlightedCompletion := HighlightFocusWord(m)
-			m.viewport.SetContent(highlightedCompletion)
+			highlightedCompletion := HighlightFocusWord(wrappedCompletion, m.focusRow, m.focusWord)
+			setViewportContent(&m, highlightedCompletion)
 
 			// If we're not at scrolloff, don't scroll
 			visibleLines := m.viewport.VisibleLineCount()
@@ -357,19 +368,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.viewport.ScrollDown(1)
 		case "b":
+			wrappedCompletion := getWrappedContent(m.content, m.viewport.Width)
 			if m.focusWord-1 < 0 && m.focusRow-1 < 0 {
 				break
 			} else if m.focusWord-1 < 0 {
 				m.focusRow = max(0, m.focusRow-1)
-				rows := strings.Split(strings.TrimSpace(m.content), "\n")
+				rows := strings.Split(strings.TrimSpace(wrappedCompletion), "\n")
 				focusedRow := strings.Split(strings.TrimSpace(rows[m.focusRow]), " ")
 				m.focusWord = len(focusedRow)
 			}
-			log.Printf("FocusWord B: %v %v", m.focusWord, m.focusRow)
 
 			m.focusWord--
-			highlightedCompletion := HighlightFocusWord(m)
-			m.viewport.SetContent(highlightedCompletion)
+			highlightedCompletion := HighlightFocusWord(wrappedCompletion, m.focusRow, m.focusWord)
+			setViewportContent(&m, highlightedCompletion)
 
 			// If we're not at scrolloff, don't scroll
 			if m.focusRow-(m.viewport.YOffset-1) > scrolloff {
@@ -411,17 +422,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.fullWidth = msg.Width
 		headerHeight := lipgloss.Height(m.headerView()) + 1
-		viewportWidth := msg.Width * 3 / 4
+		viewportWidth := msg.Width*3/4 + 1
+		viewportHeight := msg.Height - headerHeight
 
 		if !m.ready {
-			viewport := viewport.New(viewportWidth, msg.Height-headerHeight)
+			viewport := viewport.New(viewportWidth, viewportHeight)
 			viewport.YPosition = headerHeight
 			viewport.SetContent(m.content)
 			m.viewport = viewport
 			m.ready = true
 		} else {
 			m.viewport.Width = viewportWidth
-			m.viewport.Height = msg.Height - headerHeight
+			m.viewport.Height = viewportHeight
 		}
 	}
 
@@ -447,7 +459,7 @@ func (m model) getFocusedWord() string {
 }
 
 func (m model) headerView() string {
-	title := titleStyle.Render("LeLang")
+	title := titleStyle.Render("LazyLang")
 
 	blockLength := max(0, m.fullWidth-lipgloss.Width(title))
 
@@ -464,7 +476,7 @@ func (m model) headerView() string {
 func (m model) sidebarView() string {
 	b := lipgloss.NewStyle().
 		Height(m.viewport.Height).
-		Width(m.viewport.Width * 1 / 4).
+		Width(m.fullWidth*1/4 - 1).
 		Border(lipgloss.NormalBorder()).
 		BorderLeft(true).
 		BorderTop(false).

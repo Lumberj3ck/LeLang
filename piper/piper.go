@@ -319,10 +319,10 @@ func (p *PiperVoice) Speak(piper_ctx context.Context, text string) error {
 	p.mu.Unlock()
 
 	defer func() {
-	p.mu.Lock()
-	p.speaking = false
-	p.mu.Unlock()
-}()
+		p.mu.Lock()
+		p.speaking = false
+		p.mu.Unlock()
+	}()
 	err := func() error {
 		modelFile := filepath.Join(voicesDir, p.Model)
 		_, err := os.Stat(modelFile)
@@ -446,10 +446,9 @@ func (p *PiperVoice) Speak(piper_ctx context.Context, text string) error {
 		case <-playbackDone:
 		}
 
-
 		log.Printf("Speaking: %s", text)
 		return nil
 	}()
 
-	return err 
+	return err
 }
