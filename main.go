@@ -492,6 +492,14 @@ func (m model) View() string {
 }
 
 func main() {
+	config, err := GetConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(config)
+	return
+
 	apiKey := os.Getenv("GROQ_API_KEY")
 	if apiKey == "" {
 		fmt.Println("Error: GROQ_API_KEY environment variable not set")
