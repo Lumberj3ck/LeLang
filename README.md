@@ -43,13 +43,13 @@ This starts both the app and a LibreTranslate instance.
 To run the app container directly (with an external LibreTranslate):
 
 ```bash
-docker build -t lelang .
-docker run --env-file .env --name lelang --rm -it \
+docker build -t lazylang .
+docker run --env-file .env --name lazylang --rm -it \
   -e PULSE_SERVER=/run/user/1000/pulse/native \
   -v /run/user/1000/pulse:/run/user/1000/pulse \
   -v ~/.config/pulse/cookie:/root/.config/pulse/cookie \
   --group-add $(getent group audio | cut -d: -f3) \
-  lelang
+  lazylang
 ```
 
 ## Contributing

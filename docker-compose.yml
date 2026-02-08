@@ -1,8 +1,8 @@
 services:
-  lelang:
+  lazylang:
     build: .
-    image: lelang
-    container_name: lelang
+    image: lazylang
+    container_name: lazylang
     env_file:
       - .env
     environment:

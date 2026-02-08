@@ -15,6 +15,6 @@ RUN mv /usr/local/bin/piper  /usr/local/bin/piper-tts
 COPY . .
 RUN go mod download
 
-RUN go build -o lelang .
+RUN go build -o lazylang .
 
-CMD ["./lelang"]
+CMD ["./lazylang"]
