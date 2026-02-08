@@ -159,7 +159,7 @@ func samplesToWAV(samples []int16, sampleRate, channels int) []byte {
 }
 
 // transcribeWithGroq sends audio to Groq API for transcription
-func transcribeWithGroq(audioData []byte, apiKey string) (string, error) {
+func transcribeWithGroq(audioData []byte, apiKey string, language string) (string, error) {
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
@@ -177,6 +177,12 @@ func transcribeWithGroq(audioData []byte, apiKey string) (string, error) {
 	err = writer.WriteField("model", "whisper-large-v3")
 	if err != nil {
 		return "", fmt.Errorf("failed to write model field: %w", err)
+	}
+
+	// Add Language field
+	err = writer.WriteField("language", language)
+	if err != nil {
+		return "", fmt.Errorf("failed to write language field: %w", err)
 	}
 
 	// Add response format

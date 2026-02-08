@@ -64,8 +64,8 @@ func MarshalVoices(body []byte) (map[string]VoiceInfo, error) {
 	return voices, nil
 }
 
-// fetchVoices downloads and caches the voices.json file
-func fetchVoices() (map[string]VoiceInfo, error) {
+// FetchVoices downloads and caches the voices.json file
+func FetchVoices() (map[string]VoiceInfo, error) {
 	voicesFile := filepath.Join(voicesDir, "voices.json")
 	if cachedVoices != nil {
 		return cachedVoices, nil
@@ -122,7 +122,7 @@ func saveToFile(data []byte, filename string) error {
 
 // ListLanguages prints all available languages for Piper TTS
 func ListLanguages() error {
-	voices, err := fetchVoices()
+	voices, err := FetchVoices()
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func ListLanguages() error {
 
 // ListVoices prints all available voices for a specific language
 func ListVoices(language string) error {
-	voices, err := fetchVoices()
+	voices, err := FetchVoices()
 	if err != nil {
 		return err
 	}
@@ -195,8 +195,7 @@ func ListVoices(language string) error {
 
 // DownloadVoice downloads a voice model and its config file
 func DownloadVoice(language string, voice string) error {
-	voices, err := fetchVoices()
-	log.Printf("Voices: %v\n", voices)
+	voices, err := FetchVoices()
 	if err != nil {
 		return err
 	}
@@ -231,6 +230,7 @@ func DownloadVoice(language string, voice string) error {
 		// Build download URL based on voice key structure
 		// Voice keys are like "en_US-lessac-medium", files are like "en_US-lessac-medium.onnx"
 		downloadURL := fmt.Sprintf("%s/%s", baseDownloadURL, filename)
+		log.Println("Downloading", downloadURL)
 
 		resp, err := http.Get(downloadURL)
 		if err != nil {
@@ -364,7 +364,7 @@ func (p *PiperVoice) Speak(piper_ctx context.Context, text string) error {
 		deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
 		deviceConfig.Playback.Format = malgo.FormatS16
 		deviceConfig.Playback.Channels = 1
-		deviceConfig.SampleRate = 16000
+		deviceConfig.SampleRate = 22000
 		deviceConfig.Alsa.NoMMap = 1
 
 		reader := bufio.NewReaderSize(pipe, 64*1024)

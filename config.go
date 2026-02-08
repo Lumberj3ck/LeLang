@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"lazylang/piper"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -18,6 +19,7 @@ type TTSBackend struct {
 type Config struct {
 	Language                  string     `json:"language"`
 	TargetTranslationLanguage string     `json:"target_translation_language"`
+	LibreTranslateURL         string     `json:"libre_translate_url"`
 	TTSBackend                TTSBackend `json:"tts_backend"`
 	// whispercpp, hosted whispercpp
 	STTBackend string `json:"stt_backend"`
@@ -27,6 +29,7 @@ func NewConfig() Config {
 	return Config{
 		Language:                  "de",
 		TargetTranslationLanguage: "en",
+		LibreTranslateURL:         "http://localhost:5000",
 		TTSBackend: TTSBackend{
 			Type:  "piper",
 			Voice: "de_DE-karlsson-low.onnx",
@@ -42,19 +45,19 @@ func CreateDefaultConfig() (Config, error) {
 
 	err := os.MkdirAll(filepath.Dir(configPath), 0755)
 	if err != nil {
-		return Config{}, err
+		return config, err
 	}
 
 	file, err := os.Create(configPath)
 	if err != nil {
-		return	Config{}, err
+		return config, err
 	}
 
 	defer file.Close()
 
 	s, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return Config{}, err
+		return config, err
 	}
 
 	file.Write(s)
@@ -70,6 +73,49 @@ func GetConfigPath() string {
 	return filepath.Join(d, ".config", "lazylang", "config.json")
 }
 
+func isValid(config Config) error {
+	return nil
+}
+
+func resolvePiperVoice(language string, defaultConfig Config) (string, string) {
+	voices, err := piper.FetchVoices()
+	if err != nil {
+		slog.Error("Failed to fetch voices; Defaulting to de_DE-karlsson-low.onnx", "error", err)
+		return defaultConfig.TTSBackend.Voice, defaultConfig.Language
+	}
+	var v string
+	for _, voice := range voices {
+		if voice.Language.Family == language {
+			v = voice.Key
+		}
+	}
+
+	if v == "" {
+		slog.Error("Language not found in voices; Defaulting to de_DE-karlsson-low.onnx", "language", language)
+		return defaultConfig.TTSBackend.Voice, defaultConfig.Language
+	}
+	return v + ".onnx", language
+}
+
+func populateDefaults(config Config) Config {
+	defaultConfig := NewConfig()
+	if config.LibreTranslateURL == "" {
+		config.LibreTranslateURL = defaultConfig.LibreTranslateURL
+	}
+
+	if config.TTSBackend.Type == "" {
+		config.TTSBackend.Type = defaultConfig.TTSBackend.Type
+	}
+
+	if config.TTSBackend.Type == "piper" && config.TTSBackend.Voice == "" {
+		voice, language := resolvePiperVoice(config.Language, defaultConfig)
+		config.TTSBackend.Voice = voice
+		config.Language = language
+	}
+
+	return config
+}
+
 func GetConfig() (Config, error) {
 	configPath := GetConfigPath()
 	configFile, err := os.Open(configPath)
@@ -77,14 +123,14 @@ func GetConfig() (Config, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		c, err := CreateDefaultConfig()
 		if err != nil {
-			log.Fatal(err)
+			return NewConfig(), err
 		}
 		return c, nil
 	}
 
 	if err != nil {
-		return Config{}, err
-	} 
+		return NewConfig(), err
+	}
 
 	defer configFile.Close()
 
@@ -94,8 +140,14 @@ func GetConfig() (Config, error) {
 	err = json.Unmarshal(byteValue, &config)
 
 	if err != nil {
-		return Config{}, err
+		return NewConfig(), err
 	}
 
+	err = isValid(config)
+	if err != nil {
+		return NewConfig(), err
+	}
+
+	config = populateDefaults(config)
 	return config, nil
 }

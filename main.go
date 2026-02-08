@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"lelang/piper"
+	"lazylang/piper"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -39,7 +41,7 @@ const (
 	scrolloff = 2
 )
 
-var isAlpha = regexp.MustCompile(`\w+`)
+var isAlpha = regexp.MustCompile(`[\p{L}]+`)
 
 type GroqTranscriptionResponse struct {
 	Text string `json:"text"`
@@ -59,9 +61,10 @@ type model struct {
 	fullWidth   int
 	cancelSpeak context.CancelFunc
 	wordsStore  *WordsStore
+	config      Config
 }
 
-func initialModel(apiKey string) model {
+func initialModel(apiKey string, config Config) model {
 	llm, err := NewLLM()
 	if err != nil {
 		fmt.Printf("Error creating LLM: %v\n", err)
@@ -69,20 +72,22 @@ func initialModel(apiKey string) model {
 	}
 
 	prompt := prompts.NewPromptTemplate(
-		`Du bist ein deutscher Lehrer. Antworte auf die folgende Frage oder Aussage auf Deutsch.
+		fmt.Sprintf(` You are a %s teacher. Respond to the following question or statement in
+  %s.
 
-Bisheriger Gesprächsverlauf:
-{{.history}}
+  Previous conversation history:
+  {{.history}}
 
-Wichtig geben Sie nur kurze Antworten auf die Fragen!
-Schüler: {{.text}}
-Lehrer:`,
+  Important: only give short answers to the questions!
+  Student: {{.text}}
+  Teacher:
+  `, config.Language, config.Language),
 		[]string{"history", "text"},
 	)
 
 	llmChain := chains.NewLLMChain(llm, prompt)
 	llmChain.Memory = memory.NewConversationBuffer()
-	piperVoice := piper.NewPiperVoice()
+	piperVoice := piper.NewPiperVoice(piper.WithModel(config.TTSBackend.Voice), piper.WithLanguage(config.Language))
 	return model{
 		llmChain:   llmChain,
 		recorder:   NewRecorder(),
@@ -90,6 +95,7 @@ Lehrer:`,
 		status:     "Ready",
 		piperVoice: piperVoice,
 		wordsStore: NewWordsStore(),
+		config:     config,
 	}
 }
 
@@ -181,13 +187,13 @@ func GetTranslation(word string, m model) tea.Cmd {
 	return func() tea.Msg {
 		baseURL := os.Getenv("LIBRETRANSLATE_URL")
 		if baseURL == "" {
-			baseURL = "http://localhost:5000"
+			baseURL = m.config.LibreTranslateURL
 		}
 
 		reqBody, err := json.Marshal(map[string]string{
 			"q":      word,
-			"source": "de",
-			"target": "en",
+			"source": m.config.Language,
+			"target": m.config.TargetTranslationLanguage,
 			"format": "text",
 		})
 		if err != nil {
@@ -401,7 +407,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.recorder.Stop()
 				m.UpdateStatus("Ready")
 				return m, func() tea.Msg {
-					transcription, err := transcribeWithGroq(m.recorder.Content, m.apiKey)
+					transcription, err := transcribeWithGroq(m.recorder.Content, m.apiKey, m.config.Language)
 					log.Println(transcription)
 					if err != nil {
 						log.Printf("Error transcribing audio: %v\n", err)
@@ -493,12 +499,16 @@ func (m model) View() string {
 
 func main() {
 	config, err := GetConfig()
-	if err != nil {
-		log.Fatal(err)
+
+    var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		log.Fatalf("Error parsing config: %v", syntaxErr)
 	}
 
-	fmt.Println(config)
-	return
+	if err != nil {
+		slog.Error("Failed to get config", "error", err)
+	}
+	slog.Info("Config", "config", config)
 
 	apiKey := os.Getenv("GROQ_API_KEY")
 	if apiKey == "" {
@@ -507,7 +517,7 @@ func main() {
 	}
 
 	p := tea.NewProgram(
-		initialModel(apiKey),
+		initialModel(apiKey, config),
 		tea.WithAltScreen(),       // use the full size of the terminal in its "alternate screen buffer"
 		tea.WithMouseCellMotion(), // turn on mouse support so we can track the mouse wheel
 	)
@@ -520,7 +530,9 @@ func main() {
 
 	m, err := p.Run()
 	my := m.(model)
-	my.cancelSpeak()
+	if my.cancelSpeak != nil {
+		my.cancelSpeak()
+	}
 
 	if err != nil {
 		fmt.Println("could not run program:", err)
