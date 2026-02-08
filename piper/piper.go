@@ -364,7 +364,7 @@ func (p *PiperVoice) Speak(piper_ctx context.Context, text string) error {
 		deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
 		deviceConfig.Playback.Format = malgo.FormatS16
 		deviceConfig.Playback.Channels = 1
-		deviceConfig.SampleRate = 22000
+		deviceConfig.SampleRate = 22050
 		deviceConfig.Alsa.NoMMap = 1
 
 		reader := bufio.NewReaderSize(pipe, 64*1024)
@@ -433,17 +433,18 @@ func (p *PiperVoice) Speak(piper_ctx context.Context, text string) error {
 			return fmt.Errorf("failed to start piper: %w", err)
 		}
 
-		// Wait for both commands to finish
-		piperErr := piperCmd.Wait()
-		if piperErr != nil && piper_ctx.Err() != context.Canceled {
-			return piperErr
-		}
-
 		// Wait for playback to actually finish (silence callbacks confirm device drained)
+		// IMPORTANT: piperCmd.Wait() must be called AFTER all reads from the pipe complete,
+		// because Wait() closes the pipe and discards any unread data in the OS buffer.
 		select {
 		case <-piper_ctx.Done():
 			return nil
 		case <-playbackDone:
+		}
+
+		piperErr := piperCmd.Wait()
+		if piperErr != nil && piper_ctx.Err() != context.Canceled {
+			return piperErr
 		}
 
 		log.Printf("Speaking: %s", text)
