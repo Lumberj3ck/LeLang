@@ -197,7 +197,7 @@ func transcribeWithGroq(audioData []byte, apiKey string, language string) (strin
 	}
 
 	// Create request
-	req, err := http.NewRequest("POST", groqAPIURL, &requestBody)
+	req, err := http.NewRequest("POST", groqAudioAPIURL, &requestBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

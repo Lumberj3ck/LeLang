@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"lazylang/piper"
+	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 )
@@ -22,7 +25,12 @@ type Config struct {
 	LibreTranslateURL         string     `json:"libre_translate_url"`
 	TTSBackend                TTSBackend `json:"tts_backend"`
 	// whispercpp, hosted whispercpp
-	STTBackend string `json:"stt_backend"`
+	STTBackend STTBackend `json:"stt_backend"`
+}
+
+type STTBackend struct {
+	Type  string `json:"type"`
+	Model string `json:"model"`
 }
 
 func NewConfig() Config {
@@ -34,7 +42,10 @@ func NewConfig() Config {
 			Type:  "piper",
 			Voice: "de_DE-karlsson-low.onnx",
 		},
-		STTBackend: "hosted",
+		STTBackend: STTBackend{
+			Type:  "hosted",
+			Model: "whisper-large-v3",
+		},
 	}
 }
 
@@ -73,8 +84,37 @@ func GetConfigPath() string {
 	return filepath.Join(d, ".config", "lazylang", "config.json")
 }
 
-func isValid(config Config) error {
-	return nil
+var invalidApiKey = errors.New("Invalid API key")
+
+func isValid(config Config, apiKey string) error {
+	model := config.STTBackend.Model
+	client := &http.Client{}
+
+	url := fmt.Sprintf("%v/models/%v", groqAPIBaseURL, model)
+	req, err := http.NewRequest("GET", url , nil)
+
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	log.Println(resp.StatusCode)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusUnauthorized:
+		return invalidApiKey
+	default:
+		return errors.New("Invalid model")
+	}
 }
 
 func resolvePiperVoice(language string, defaultConfig Config) (string, string) {
@@ -116,7 +156,7 @@ func populateDefaults(config Config) Config {
 	return config
 }
 
-func GetConfig() (Config, error) {
+func GetConfig(apiKey string) (Config, error) {
 	configPath := GetConfigPath()
 	configFile, err := os.Open(configPath)
 
@@ -143,7 +183,7 @@ func GetConfig() (Config, error) {
 		return NewConfig(), err
 	}
 
-	err = isValid(config)
+	err = isValid(config, apiKey)
 	if err != nil {
 		return NewConfig(), err
 	}

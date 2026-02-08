@@ -29,8 +29,10 @@ import (
 const (
 	sampleRate = 16000
 	channels   = 1
-	groqAPIURL = "https://api.groq.com/openai/v1/audio/transcriptions"
+	groqAPIBaseURL = "https://api.groq.com/openai/v1"
 )
+var groqAudioAPIURL = fmt.Sprintf("%v/audio/transcriptions", groqAPIBaseURL)
+
 
 // WAV header constants
 const (
@@ -499,11 +501,19 @@ func (m model) View() string {
 }
 
 func main() {
-	config, err := GetConfig()
+	apiKey := os.Getenv("GROQ_API_KEY")
+	if apiKey == "" {
+		fmt.Println("Error: GROQ_API_KEY environment variable not set")
+		os.Exit(1)
+	}
+
+	config, err := GetConfig(apiKey)
 
     var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) {
 		log.Fatalf("Error parsing config: %v", syntaxErr)
+	} else if errors.Is(err, invalidApiKey) {
+		log.Fatalf("Error: Invalid API key")
 	}
 
 	if err != nil {
@@ -511,11 +521,6 @@ func main() {
 	}
 	slog.Info("Config", "config", config)
 
-	apiKey := os.Getenv("GROQ_API_KEY")
-	if apiKey == "" {
-		fmt.Println("Error: GROQ_API_KEY environment variable not set")
-		os.Exit(1)
-	}
 
 	p := tea.NewProgram(
 		initialModel(apiKey, config),
