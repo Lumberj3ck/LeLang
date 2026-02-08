@@ -263,7 +263,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.UpdateStatus(msg.status)
 	case ReadyCompletion:
 		if msg.addContent {
-			m.content = fmt.Sprintf("%sAI: %s \n", m.content, msg.completion)
+			sanitisedCompletion := strings.ReplaceAll(msg.completion, "\n\n", "\n")
+			m.content = fmt.Sprintf("%sAI: %s \n", m.content, sanitisedCompletion)
 			highlightedCompletion := HighlightFocusWord(m.content, m.focusRow, m.focusWord)
 			setViewportContent(&m, highlightedCompletion)
 			m.viewport.GotoBottom()
